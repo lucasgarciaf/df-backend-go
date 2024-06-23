@@ -1,0 +1,78 @@
+services:
+  postgres:
+    image: postgres:latest
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - backend-network
+
+  keycloak:
+    image: bitnami/keycloak
+    restart: always
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      # KEYCLOAK_USER: admin
+      # KEYCLOAK_PASSWORD: admin
+      # KEYCLOAK_DATABASE_PORT: 5432
+      KEYCLOAK_DATABASE_HOST: postgres
+      KEYCLOAK_DATABASE_NAME: keycloak
+      KEYCLOAK_DATABASE_USER: keycloak
+      KEYCLOAK_DATABASE_PASSWORD: password
+      KEYCLOAK_EXTRA_ARGS: --import-realm
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./realm-config:/opt/bitnami/keycloak/data/import
+    depends_on:
+      - postgres
+    networks:
+      - backend-network
+    # command:
+    #   - start-dev 
+
+  df-backend-go:
+    build: .
+    ports:
+      - "8081:8081"
+    environment:
+      - MONGODB_URI=${MONGODB_URI}
+      - DATABASE_NAME=${DATABASE_NAME}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - TOKEN_EXPIRY=${TOKEN_EXPIRY}
+      - KEYCLOAK_URL=${KEYCLOAK_URL}
+      - KEYCLOAK_REALM=${KEYCLOAK_REALM}
+      - KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID}
+      - KEYCLOAK_CLIENT_SECRET=${KEYCLOAK_CLIENT_SECRET}
+      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD}
+    depends_on:
+      - keycloak
+      - mongo
+    command: >
+      /bin/sh -c 'while [[ "$(curl --connect-timeout 2 -s -o /dev/null -w "%{http_code}" http://keycloak:8080/realms/drivefluency/.well-known/openid-configuration)" != "200" ]]; do echo ..; sleep 5; done; echo Keycloak is up; ./main'
+    networks:
+      - backend-network
+
+  mongo:
+    image: mongo:latest
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - backend-network
+
+volumes:
+  postgres-data:
+  mongo-data:
+
+networks:
+  backend-network:
+
