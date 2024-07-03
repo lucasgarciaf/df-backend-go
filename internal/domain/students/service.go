@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/Nerzal/gocloak"
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/lucasgarciaf/df-backend-go/config"
 	"github.com/lucasgarciaf/df-backend-go/internal/utils"
@@ -17,8 +19,8 @@ import (
 )
 
 var (
-	ErrInvalidCredentials = errors.New("invalid email or password")
-	ErrEmailExists        = errors.New("email already exists")
+	ErrInvalidCredentials = errors.New("error in sercvice.go = invalid email or password")
+	ErrEmailExists        = errors.New("error in sercvice.go = email already exists")
 )
 
 type AuthClaims struct {
@@ -36,64 +38,71 @@ func NewStudentService(repo StudentRepository) *StudentService {
 }
 
 func (s *StudentService) CreateStudent(student Student, password string) (primitive.ObjectID, error) {
-	// Create user in Keycloak
-	err := s.createUserInKeycloak(student, password)
-	if err != nil {
-		return primitive.NilObjectID, err
-	}
-
-	// Create user in MongoDB
+	// Check if the email already exists
 	existingStudent, _ := s.repo.GetStudentByEmail(student.Email)
 	if existingStudent != nil {
+		log.Printf("Email already exists: %s", student.Email)
 		return primitive.NilObjectID, ErrEmailExists
 	}
 
+	// Hash the password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
+		log.Printf("Error hashing password: %v", err)
 		return primitive.NilObjectID, err
 	}
 	student.PasswordHash = string(hashedPassword)
-	student.Role = "student" // Ensure Role is set
+	student.Role = "student"
 	student.CreatedAt = time.Now()
 	student.UpdatedAt = time.Now()
 
-	return s.repo.CreateStudent(student)
+	// Create the student in MongoDB
+	studentID, err := s.repo.CreateStudent(student)
+	if err != nil {
+		log.Printf("Error creating student in MongoDB: %v", err)
+		return primitive.NilObjectID, err
+	}
+
+	// Create the student in Keycloak
+	err = s.createUserInKeycloak(student, password)
+	if err != nil {
+		// Rollback MongoDB creation in case of Keycloak error
+		s.repo.DeleteStudent(studentID)
+		log.Printf("Error creating student in Keycloak: %v", err)
+		return primitive.NilObjectID, err
+	}
+
+	return studentID, nil
 }
 
 func (s *StudentService) Authenticate(email, password string) (string, error) {
-	student, err := s.repo.GetStudentByEmail(email)
+	client := gocloak.NewClient(config.KeycloakURL)
+	token, err := client.Login(config.KeycloakClientID, config.KeycloakClientSecret, config.KeycloakRealm, email, password)
 	if err != nil {
+		log.Printf("Login to Keycloak failed: %v", err)
 		return "", ErrInvalidCredentials
 	}
 
-	err = bcrypt.CompareHashAndPassword([]byte(student.PasswordHash), []byte(password))
-	if err != nil {
-		return "", ErrInvalidCredentials
-	}
+	return token.AccessToken, nil
+}
 
-	token, err := s.createToken(student.ID, student.Role)
+func (s *StudentService) AuthenticateWithKeycloak(email, password string) (string, error) {
+	// Login to Keycloak
+	token, err := utils.GetKeycloakToken(email, password)
 	if err != nil {
+		log.Printf("Login to Keycloak failed: %v", err)
 		return "", err
 	}
 
 	return token, nil
 }
 
-func (s *StudentService) createToken(studentID primitive.ObjectID, role string) (string, error) {
-	claims := &AuthClaims{
-		StudentID: studentID,
-		Role:      role,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(config.TokenExpiry)),
-		},
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(config.JWTSecretKey)
-}
-
 func (s *StudentService) GetStudentByID(id primitive.ObjectID) (*Student, error) {
 	return s.repo.GetStudentByID(id)
+}
+
+func (s *StudentService) GetAllStudents() ([]Student, error) {
+	return s.repo.GetAllStudents()
 }
 
 func (s *StudentService) UpdateStudent(student Student) error {
@@ -145,7 +154,7 @@ func (s *StudentService) createUserInKeycloak(student Student, password string) 
 		return err
 	}
 
-	url := fmt.Sprintf("%sadmin/realms/%s/users", config.KEYCLOAK_URL, config.KEYCLOAK_REALM)
+	url := fmt.Sprintf("%s/admin/realms/%s/users", config.KeycloakURL, config.KeycloakRealm)
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(userJSON))
 	if err != nil {
 		log.Printf("Failed to create request: %v", err)
@@ -174,17 +183,20 @@ func (s *StudentService) createUserInKeycloak(student Student, password string) 
 		return fmt.Errorf("failed to create user in Keycloak: %s", resp.Status)
 	}
 
-	// Get the user ID from Keycloak
-	var result struct {
-		ID string `json:"id"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		log.Printf("Failed to decode response from Keycloak: %v", err)
-		return fmt.Errorf("failed to decode response from Keycloak: %w", err)
+	// Keycloak does not return a body on successful user creation, so we use the Location header to get the user ID.
+	location := resp.Header.Get("Location")
+	if location == "" {
+		log.Printf("Failed to get user location header from Keycloak response")
+		return fmt.Errorf("failed to get user location header from Keycloak response")
 	}
 
+	// Extract user ID from the Location header
+	segments := strings.Split(location, "/")
+	userID := segments[len(segments)-1]
+	log.Printf("User ID from Keycloak: %s", userID)
+
 	// Assign the "student" role to the user
-	if err := s.assignRoleToUser(result.ID, "student"); err != nil {
+	if err := s.assignRoleToUser(userID, "student"); err != nil {
 		log.Printf("Failed to assign role to user: %v", err)
 		return fmt.Errorf("failed to assign role to user: %w", err)
 	}
@@ -193,8 +205,7 @@ func (s *StudentService) createUserInKeycloak(student Student, password string) 
 }
 
 func (s *StudentService) assignRoleToUser(userID, roleName string) error {
-	// Get the role ID
-	url := fmt.Sprintf("%sadmin/realms/%s/roles/%s", config.KEYCLOAK_URL, config.KEYCLOAK_REALM, roleName)
+	url := fmt.Sprintf("%s/admin/realms/%s/roles/%s", config.KeycloakURL, config.KeycloakRealm, roleName)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		log.Printf("Failed to create request for role ID: %v", err)
@@ -231,8 +242,7 @@ func (s *StudentService) assignRoleToUser(userID, roleName string) error {
 	}
 	log.Printf("Role ID for %s: %s", roleName, role.ID)
 
-	// Assign the role to the user
-	assignRoleURL := fmt.Sprintf("%sadmin/realms/%s/users/%s/role-mappings/realm", config.KEYCLOAK_URL, config.KEYCLOAK_REALM, userID)
+	assignRoleURL := fmt.Sprintf("%s/admin/realms/%s/users/%s/role-mappings/realm", config.KeycloakURL, config.KeycloakRealm, userID)
 	roleMapping := []struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`

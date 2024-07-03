@@ -107,11 +107,11 @@ func (s *InstructorService) DeleteInstructor(id primitive.ObjectID) error {
 }
 
 func (s *InstructorService) Logout(refreshToken string) error {
-	logoutURL := fmt.Sprintf("%sprotocol/openid-connect/logout", config.KEYCLOAK_URL)
+	logoutURL := fmt.Sprintf("%sprotocol/openid-connect/logout", config.KeycloakURL)
 
 	data := map[string]string{
-		"client_id":     config.KEYCLOAK_CLIENT_ID,
-		"client_secret": config.KEYCLOAK_CLIENT_SECRET,
+		"client_id":     config.KeycloakClientID,
+		"client_secret": config.KeycloakClientSecret,
 		"refresh_token": refreshToken,
 	}
 
@@ -178,7 +178,7 @@ func (s *InstructorService) createUserInKeycloak(instructor Instructor, password
 		return err
 	}
 
-	url := fmt.Sprintf("%sadmin/realms/%s/users", config.KEYCLOAK_URL, config.KEYCLOAK_REALM)
+	url := fmt.Sprintf("%sadmin/realms/%s/users", config.KeycloakURL, config.KeycloakRealm)
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(userJSON))
 	if err != nil {
 		return err

@@ -2,55 +2,59 @@ package middleware
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 
-	"github.com/coreos/go-oidc"
+	"github.com/Nerzal/gocloak/v13"
 	"github.com/gin-gonic/gin"
-	kconfig "github.com/lucasgarciaf/df-backend-go/config"
-	"golang.org/x/oauth2"
+	"github.com/lucasgarciaf/df-backend-go/config"
 )
 
-var (
-	provider *oidc.Provider
-	config   oauth2.Config
-	verifier *oidc.IDTokenVerifier
-)
+var client gocloak.GoCloak
 
 func InitKeycloak() error {
-	var err error
-	ctx := context.Background()
-	provider, err = oidc.NewProvider(ctx, kconfig.KEYCLOAK_URL+"realms/"+kconfig.KEYCLOAK_REALM)
+	client = *gocloak.NewClient(config.KeycloakURL)
+	token, err := client.LoginClient(context.TODO(), config.KeycloakClientID, config.KeycloakClientSecret, config.KeycloakRealm)
 	if err != nil {
-		return err
+		return fmt.Errorf("login to keycloak failed: %w", err)
 	}
-
-	verifier = provider.Verifier(&oidc.Config{ClientID: kconfig.KEYCLOAK_CLIENT_ID})
+	fmt.Printf("Successfully logged into Keycloak with token: %v\n", token.AccessToken)
 	return nil
 }
 
-func AuthMiddleware(c *gin.Context) {
-	rawToken := c.GetHeader("Authorization")
-	if rawToken == "" {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization header missing"})
-		return
+// CORS middleware
+func CORSMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Authorization, Accept, X-Requested-With")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
+
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(204)
+			return
+		}
+
+		c.Next()
 	}
+}
 
-	rawToken = strings.TrimPrefix(rawToken, "Bearer ")
+func AuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
+			return
+		}
 
-	ctx := context.Background()
-	idToken, err := verifier.Verify(ctx, rawToken)
-	if err != nil {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
-		return
+		tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+		rptResult, err := client.RetrospectToken(context.TODO(), tokenStr, config.KeycloakClientID, config.KeycloakClientSecret, config.KeycloakRealm)
+		if err != nil || !*rptResult.Active {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
+			return
+		}
+
+		c.Next()
 	}
-
-	var claims map[string]interface{}
-	if err := idToken.Claims(&claims); err != nil {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Failed to parse token claims"})
-		return
-	}
-
-	c.Set("user", claims)
-	c.Next()
 }

@@ -4,46 +4,25 @@ import (
 	"log"
 	"os"
 	"time"
-
-	"github.com/joho/godotenv"
 )
 
-func init() {
-	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found")
-	}
-}
-
 var (
-	TokenExpiry             = getEnvAsDuration("TOKEN_EXPIRY", time.Hour*24)
-	JWTSecretKey            = []byte(getEnv("JWT_SECRET_KEY", "default-secret"))
-	MongoDBURI              = getEnv("MONGODB_URI", "mongodb://localhost:27017")
-	DatabaseName            = getEnv("DATABASE_NAME", "drivefluency")
-	KEYCLOAK_URL            = getEnv("KEYCLOAK_URL", "http://keycloak:8080/")
-	KEYCLOAK_REALM          = getEnv("KEYCLOAK_REALM", "drivefluency")
-	KEYCLOAK_CLIENT_ID      = getEnv("KEYCLOAK_CLIENT_ID", "df-backend-go")
-	KEYCLOAK_CLIENT_SECRET  = getEnv("KEYCLOAK_CLIENT_SECRET", "JWGNgb3pasLTIAPdXSznyMeoVBM0qWdh")
-	KEYCLOAK_ADMIN          = getEnv("KEYCLOAK_ADMIN", "admin")
-	KEYCLOAK_ADMIN_PASSWORD = getEnv("KEYCLOAK_ADMIN_PASSWORD", "admin")
+	MongoDBURI           = getEnv("MONGODB_URI", "mongodb://localhost:27017")
+	DatabaseName         = getEnv("DATABASE_NAME", "drivefluency")
+	KeycloakURL          = getEnv("KEYCLOAK_URL", "http://localhost:8080")
+	KeycloakRealm        = getEnv("KEYCLOAK_REALM", "myrealm")
+	KeycloakClientID     = getEnv("KEYCLOAK_CLIENT_ID", "myclient")
+	KeycloakClientSecret = getEnv("KEYCLOAK_CLIENT_SECRET", "mysecret")
+	JWTSecretKey         = []byte(getEnv("JWT_SECRET_KEY", "myjwtsecret"))
+	TokenExpiry          = time.Hour * 24 // Token expiry duration set to 24 hours
 )
 
 func getEnv(key, defaultValue string) string {
-	value, exists := os.LookupEnv(key)
-	if !exists {
-		return defaultValue
+	if value, exists := os.LookupEnv(key); exists {
+		return value
 	}
-	return value
-}
-
-func getEnvAsDuration(key string, defaultValue time.Duration) time.Duration {
-	valueStr := getEnv(key, "")
-	if valueStr == "" {
-		return defaultValue
+	if defaultValue == "" {
+		log.Fatalf("Environment variable %s is not set and no default value provided", key)
 	}
-	value, err := time.ParseDuration(valueStr)
-	if err != nil {
-		log.Printf("Invalid duration for %s, using default: %v", key, defaultValue)
-		return defaultValue
-	}
-	return value
+	return defaultValue
 }

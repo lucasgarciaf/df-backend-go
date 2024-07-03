@@ -1,6 +1,8 @@
 package students
 
 import (
+	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -25,9 +27,12 @@ func (h *StudentHandler) Register(c *gin.Context) {
 		Password  string `json:"password" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("Error binding JSON: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	log.Printf("Received registration request for user: %s", req.Email)
+
 	student := students.Student{
 		Username:  req.Username,
 		FirstName: req.FirstName,
@@ -36,46 +41,36 @@ func (h *StudentHandler) Register(c *gin.Context) {
 	}
 	id, err := h.service.CreateStudent(student, req.Password)
 	if err != nil {
+		log.Printf("Error creating student: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Printf("Successfully created student with ID: %s", id.Hex())
 	c.JSON(http.StatusCreated, gin.H{"id": id.Hex()})
 }
 
-func (h *StudentHandler) Login(c *gin.Context) (string, error) {
+func (h *StudentHandler) Login(c *gin.Context) {
 	var credentials struct {
 		Email    string `json:"email" binding:"required"`
 		Password string `json:"password" binding:"required"`
+		Role     string `json:"role" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&credentials); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return "", err
-	}
-	token, err := h.service.Authenticate(credentials.Email, credentials.Password)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
-		return "", err
-	}
-	return token, nil
-}
-
-func (h *StudentHandler) Logout(c *gin.Context) error {
-	// Implement the logout functionality if needed
-	return nil
-}
-
-func (h *StudentHandler) CreateStudent(c *gin.Context) {
-	var student students.Student
-	if err := c.ShouldBindJSON(&student); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	id, err := h.service.CreateStudent(student, student.PasswordHash)
+
+	fmt.Printf("Received login request for email: %s\n", credentials.Email)
+
+	// Authenticate with Keycloak
+	token, err := h.service.AuthenticateWithKeycloak(credentials.Email, credentials.Password)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid email or password"})
 		return
 	}
-	c.JSON(http.StatusCreated, id)
+
+	// Return the token to the client
+	c.JSON(http.StatusOK, gin.H{"token": token})
 }
 
 func (h *StudentHandler) GetStudentByID(c *gin.Context) {
@@ -90,6 +85,15 @@ func (h *StudentHandler) GetStudentByID(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, student)
+}
+
+func (h *StudentHandler) GetAllStudents(c *gin.Context) {
+	students, err := h.service.GetAllStudents()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, students)
 }
 
 func (h *StudentHandler) UpdateStudent(c *gin.Context) {

@@ -8,4 +8,5 @@ type StudentRepository interface {
 	GetStudentByEmail(email string) (*Student, error)
 	UpdateStudent(student Student) error
 	DeleteStudent(id primitive.ObjectID) error
+	GetAllStudents() ([]Student, error)
 }

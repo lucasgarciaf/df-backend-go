@@ -18,9 +18,6 @@ services:
     environment:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
-      # KEYCLOAK_USER: admin
-      # KEYCLOAK_PASSWORD: admin
-      # KEYCLOAK_DATABASE_PORT: 5432
       KEYCLOAK_DATABASE_HOST: postgres
       KEYCLOAK_DATABASE_NAME: keycloak
       KEYCLOAK_DATABASE_USER: keycloak
@@ -34,15 +31,13 @@ services:
       - postgres
     networks:
       - backend-network
-    # command:
-    #   - start-dev 
 
   df-backend-go:
     build: .
     ports:
       - "8081:8081"
     environment:
-      - MONGODB_URI=${MONGODB_URI}
+      - MONGODB_URI=mongodb://mongo:27017
       - DATABASE_NAME=${DATABASE_NAME}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - TOKEN_EXPIRY=${TOKEN_EXPIRY}
@@ -75,4 +70,5 @@ volumes:
 
 networks:
   backend-network:
-
+   external: true
+    # name: backend-network
